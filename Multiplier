@@ -1,0 +1,156 @@
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+
+entity Multiplier is
+    Port (
+        multiplicand : in  std_logic_vector(3 downto 0);
+        multiplier   : in  std_logic_vector(3 downto 0);
+        result       : out std_logic_vector(7 downto 0)
+    );
+end Multiplier;
+
+architecture Behavioral of Multiplier is
+
+    -- 4비트 2의 보수 모듈
+    component TwosComplement_4Bit is
+        Port (
+            binary_in  : in std_logic_vector(3 downto 0);
+            complement : out std_logic_vector(3 downto 0)
+        );
+    end component;
+
+    -- 8비트 2의 보수 모듈
+    component TwosComplement_8Bit is
+        Port (
+            binary_in  : in std_logic_vector(7 downto 0);
+            complement : out std_logic_vector(7 downto 0)
+        );
+    end component;
+
+    -- 4비트 덧셈기 모듈
+    component FourbitAdder is
+        Port (
+            A_4in : in std_logic_vector(3 downto 0);
+            B_4in : in std_logic_vector(3 downto 0);
+            Cin   : in std_logic;   -- Carry-in
+            Addr_out : out std_logic_vector(4 downto 0);
+            overflow : out std_logic -- Overflow detect
+        );
+    end component;
+
+    -- 내부 신호
+    signal multiplicand_ext, multiplier_ext : std_logic_vector(7 downto 0);
+    signal AB : std_logic_vector(15 downto 0);
+    signal K0, K1, K2 : std_logic_vector(3 downto 0);
+    signal conn0, conn1, conn2, conn3 : std_logic_vector(4 downto 0);
+
+    signal multiplicand_pos, multiplier_pos : std_logic_vector(3 downto 0);
+    signal multiplicand_neg, multiplier_neg : std_logic_vector(3 downto 0);
+    signal multiplicand_sign, multiplier_sign : std_logic;
+    signal result_sign : std_logic;
+    signal result_unsigned : std_logic_vector(7 downto 0);
+    signal result_twos_complement : std_logic_vector(7 downto 0);
+
+begin
+
+    -- 2의 보수 모듈 인스턴스
+    TwosComp_M: TwosComplement_4Bit port map (
+        binary_in  => multiplicand,
+        complement => multiplicand_neg
+    );
+
+    TwosComp_Q: TwosComplement_4Bit port map (
+        binary_in  => multiplier,
+        complement => multiplier_neg
+    );
+
+    TwosComp_Result: TwosComplement_8Bit port map (
+        binary_in  => result_unsigned,
+        complement => result_twos_complement
+    );
+
+    -- 부호 확인
+    multiplicand_sign <= multiplicand(3);
+    multiplier_sign <= multiplier(3);
+
+    -- 부호가 음수면 2의 보수를 취해 양수로 변환
+    multiplicand_pos <= multiplicand_neg when multiplicand_sign = '1' else multiplicand;
+    multiplier_pos <= multiplier_neg when multiplier_sign = '1' else multiplier;
+
+    -- 부호 확장
+    multiplicand_ext <= (multiplicand_pos(3) & multiplicand_pos(3) & multiplicand_pos(3) & multiplicand_pos(3) & multiplicand_pos);
+    multiplier_ext <= (multiplier_pos(3) & multiplier_pos(3) & multiplier_pos(3) & multiplier_pos(3) & multiplier_pos);
+
+    -- AND 연산을 통한 Partial Products 생성
+    AB(0) <= multiplicand_ext(0) and multiplier_ext(0);
+    AB(1) <= multiplicand_ext(1) and multiplier_ext(0);
+    AB(2) <= multiplicand_ext(2) and multiplier_ext(0);
+    AB(3) <= multiplicand_ext(3) and multiplier_ext(0);
+
+    AB(4) <= multiplicand_ext(0) and multiplier_ext(1);
+    AB(5) <= multiplicand_ext(1) and multiplier_ext(1);
+    AB(6) <= multiplicand_ext(2) and multiplier_ext(1);
+    AB(7) <= multiplicand_ext(3) and multiplier_ext(1);
+
+    AB(8) <= multiplicand_ext(0) and multiplier_ext(2);
+    AB(9) <= multiplicand_ext(1) and multiplier_ext(2);
+    AB(10) <= multiplicand_ext(2) and multiplier_ext(2);
+    AB(11) <= multiplicand_ext(3) and multiplier_ext(2);
+
+    AB(12) <= multiplicand_ext(0) and multiplier_ext(3);
+    AB(13) <= multiplicand_ext(1) and multiplier_ext(3);
+    AB(14) <= multiplicand_ext(2) and multiplier_ext(3);
+    AB(15) <= multiplicand_ext(3) and multiplier_ext(3);
+
+    -- Partial Product 재배열
+    K0 <= (AB(7), AB(6), AB(5), AB(4));
+    K1 <= (AB(11), AB(10), AB(9), AB(8));
+    K2 <= (AB(15), AB(14), AB(13), AB(12));
+    conn0 <= ('0', AB(3), AB(2), AB(1), AB(0));
+
+    -- 첫 번째 FourBitAdder
+    FBM1: FourbitAdder port map (
+        A_4in => K0,
+        B_4in => conn0(4 downto 1),
+        Cin      => '0',
+        Addr_out => conn1,
+        overflow => open
+    );
+
+    -- 두 번째 FourBitAdder
+    FBM2: FourbitAdder port map (
+        A_4in => K1,
+        B_4in => conn1(4 downto 1),
+        Cin      => '0',
+        Addr_out => conn2,
+        overflow => open
+    );
+
+    -- 세 번째 FourBitAdder
+    FBM3: FourbitAdder port map (
+        A_4in => K2,
+        B_4in => conn2(4 downto 1),
+        Cin      => '0',
+        Addr_out => conn3,
+        overflow => open
+    );
+
+    -- 최종 부호 계산
+    result_sign <= multiplicand_sign xor multiplier_sign;
+
+    -- 최종 결과 조합 (부호 없는 값)
+    result_unsigned(7 downto 3) <= conn3(4 downto 0);
+    
+    result_unsigned(2) <= conn2(0);
+    result_unsigned(1) <= conn1(0);
+    result_unsigned(0) <= AB(0);
+    -- 최종 결과 조합 (부호 없는 값)
+--    result_unsigned(7 downto 3) <= conn3(4 downto 0);
+--    result_unsigned(2) <= conn2(0);
+--    result_unsigned(1) <= conn1(0);
+--    result_unsigned(0) <= conn0(4);
+--    --result_unsigned(0) <= conn0(3);
+    -- 최종 결과에 부호 처리
+    result <= result_unsigned when result_sign = '0' else result_twos_complement;
+
+end Behavioral;
